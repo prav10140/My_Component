@@ -1,30 +1,31 @@
 import os
-import base64
+import streamlit as st
+import tensorflow as tf
 import numpy as np
 import cv2
+from PIL import Image
 import gdown
-from tensorflow.keras.models import load_model
-from flask import Flask, request, jsonify, render_template_string
-from flask_cors import CORS
+import matplotlib.pyplot as plt
 
-app = Flask(__name__)
-CORS(app)
+st.set_page_config(page_title="CNN Batch Prediction", page_icon="📷")
 
-# -------------------------------
-# 1️⃣ Download model from Google Drive if not present
+st.title("📷 CNN Batch Prediction")
+st.write("Upload up to 6 images to get predictions from the CNN model.")
+
+# -------------------------
+# Download model from Google Drive if not exists
 MODEL_PATH = "MY_MODEL.keras"
 FILE_ID = "1az8IY3x9E8jzePRz2QB3QjIhgGafjaH_"
+
 if not os.path.exists(MODEL_PATH):
-    print("Downloading model from Google Drive...")
+    st.info("Downloading model from Google Drive...")
     url = f"https://drive.google.com/uc?id={FILE_ID}"
     gdown.download(url, MODEL_PATH, quiet=False)
-else:
-    print("Model already exists locally.")
+    st.success("Model downloaded successfully!")
 
 # Load model
-model = load_model(MODEL_PATH)
+model = tf.keras.models.load_model(MODEL_PATH)
 
-# Class labels
 class_labels = [
     'Ammeter', 'ac_src', 'battery', 'cap', 'curr_src',
     'dc_volt_src_1', 'dc_volt_src_2', 'dep_curr_src',
@@ -32,30 +33,39 @@ class_labels = [
     'inductor', 'resistor', 'voltmeter'
 ]
 
-# -------------------------------
-# API endpoint
-@app.route("/api/predict", methods=["POST"])
-def predict():
-    try:
-        data = request.get_json()
-        image_data = data["image"]
+# -------------------------
+# Upload multiple images
+uploaded = st.file_uploader("Upload up to 6 images", type=['png','jpg','jpeg'], accept_multiple_files=True)
 
-        # Decode base64 image
-        image_bytes = base64.b64decode(image_data.split(",")[1])
-        np_arr = np.frombuffer(image_bytes, np.uint8)
-        img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+if uploaded:
+    n_files = min(len(uploaded), 6)
+    st.write(f"Processing {n_files} image(s)...")
+    
+    fig, axes = plt.subplots(1, n_files, figsize=(4*n_files, 4))
+    if n_files == 1:
+        axes = [axes]  # Ensure axes is iterable
+    
+    for i, uploaded_file in enumerate(uploaded[:6]):
+        # Read image with all channels
+        img = np.array(Image.open(uploaded_file))
 
-        # Convert to grayscale
+        # ✅ Convert RGBA → RGB if needed
+        if img.shape[-1] == 4:
+            img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
+
+        # ✅ Convert to grayscale
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-        # Normalize & invert if background is white
+        # ✅ Normalize to [0,1] before checking brightness
         norm = gray / 255.0
+
+        # ✅ Invert if background is white
         if np.mean(norm) > 0.5:
             gray = 255 - gray
 
-        # Resize & stack to 3 channels
+        # ✅ Resize & stack 3 channels
         gray_resized = cv2.resize(gray, (128, 128))
-        img_rgb = cv2.merge([gray_resized, gray_resized, gray_resized])
+        img_rgb = cv2.merge([gray_resized]*3)
         img_input = np.expand_dims(img_rgb / 255.0, axis=0)
 
         # Predict
@@ -63,86 +73,10 @@ def predict():
         pred_class = np.argmax(prediction)
         label = class_labels[pred_class]
 
-        return jsonify({"label": label})
-    except Exception as e:
-        return jsonify({"error": str(e)})
+        # Display
+        axes[i].imshow(gray_resized, cmap='gray')
+        axes[i].set_title(label, fontsize=12, color='green')
+        axes[i].axis('off')
 
-# -------------------------------
-# Frontend page
-@app.route("/")
-def home():
-    return render_template_string("""
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Live CNN Prediction</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
-    <style>
-        body {
-            font-family: 'Arial', sans-serif;
-            text-align: center;
-            background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
-            color: #fff;
-            margin: 0;
-            padding: 0;
-        }
-        h1 {
-            margin-top: 20px;
-            font-size: 2.5em;
-            text-shadow: 2px 2px 8px #000;
-        }
-        #result {
-            margin-top: 15px;
-            font-size: 1.5em;
-            padding: 10px;
-            background: rgba(0,0,0,0.3);
-            display: inline-block;
-            border-radius: 10px;
-        }
-        canvas {
-            border: 3px solid #fff;
-            margin-top: 20px;
-            border-radius: 10px;
-        }
-    </style>
-</head>
-<body>
-    <h1>📷 Live CNN Prediction</h1>
-    <div id="result">Waiting...</div>
-
-    <script>
-        let video;
-        const apiURL = "/api/predict";
-
-        function setup() {
-            createCanvas(128, 128);
-            video = createCapture(VIDEO);
-            video.size(128, 128);
-            video.hide();
-            frameRate(1);
-        }
-
-        async function draw() {
-            image(video, 0, 0, 128, 128);
-            const base64Img = document.querySelector("canvas").toDataURL("image/png");
-
-            try {
-                const res = await fetch(apiURL, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ image: base64Img })
-                });
-                const data = await res.json();
-                document.getElementById("result").innerText = "🔮 " + (data.label || data.error);
-            } catch (err) {
-                document.getElementById("result").innerText = "Error: " + err;
-            }
-        }
-    </script>
-</body>
-</html>
-""")
-
-# -------------------------------
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    plt.tight_layout()
+    st.pyplot(fig)
