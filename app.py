@@ -8,7 +8,7 @@ import gdown
 
 st.set_page_config(page_title="CNN Image Prediction", page_icon="📷")
 st.title("📷 CNN Image Prediction")
-st.write("Upload images or take a photo using your back camera for prediction.")
+st.write("Upload images or take a photo using your back camera for prediction. On supported devices, flashlight can be turned on manually or automatically.")
 
 # -------------------------
 # Download model from Google Drive if not exists
@@ -36,9 +36,14 @@ class_labels = [
 tab1, tab2 = st.tabs(["📸 Camera", "📁 Upload Images"])
 
 # -------------------------
-# Tab 1: Camera Input
+# Tab 1: Torch-enabled Camera Input
 with tab1:
+    st.markdown("""
+    <p style='color:orange'>⚠️ On mobile, you can turn on the flashlight manually via your camera UI. Automatic torch may work on some devices only.</p>
+    """, unsafe_allow_html=True)
+
     captured_image = st.camera_input("Take a photo (back camera works on mobile)")
+
     if captured_image is not None:
         # Preprocess
         img = np.array(Image.open(captured_image))
