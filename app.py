@@ -13,7 +13,7 @@ CORS(app)
 # -------------------------------
 # 1️⃣ Download model from Google Drive if not present
 MODEL_PATH = "MY_MODEL.keras"
-FILE_ID = "YOUR_GOOGLE_DRIVE_FILE_ID"
+FILE_ID = "1az8IY3x9E8jzePRz2QB3QjIhgGafjaH_"
 if not os.path.exists(MODEL_PATH):
     print("Downloading model from Google Drive...")
     url = f"https://drive.google.com/uc?id={FILE_ID}"
