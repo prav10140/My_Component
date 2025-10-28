@@ -5,12 +5,10 @@ import numpy as np
 import cv2
 from PIL import Image
 import gdown
-import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="CNN Batch Prediction", page_icon="📷")
-
-st.title("📷 CNN Batch Prediction")
-st.write("Upload up to 6 images to get predictions from the CNN model.")
+st.set_page_config(page_title="CNN Image Prediction", page_icon="📷")
+st.title("📷 CNN Image Prediction")
+st.write("Upload images or take a photo using your back camera for prediction.")
 
 # -------------------------
 # Download model from Google Drive if not exists
@@ -18,10 +16,10 @@ MODEL_PATH = "MY_MODEL.keras"
 FILE_ID = "1az8IY3x9E8jzePRz2QB3QjIhgGafjaH_"
 
 if not os.path.exists(MODEL_PATH):
-    st.info("Downloading model from Google Drive...")
+    st.info("Downloading model...")
     url = f"https://drive.google.com/uc?id={FILE_ID}"
     gdown.download(url, MODEL_PATH, quiet=False)
-    st.success("Model downloaded successfully!")
+    st.success("Model downloaded!")
 
 # Load model
 model = tf.keras.models.load_model(MODEL_PATH)
@@ -34,36 +32,22 @@ class_labels = [
 ]
 
 # -------------------------
-# Upload multiple images
-uploaded = st.file_uploader("Upload up to 6 images", type=['png','jpg','jpeg'], accept_multiple_files=True)
+# Two tabs: Camera or Upload
+tab1, tab2 = st.tabs(["📸 Camera", "📁 Upload Images"])
 
-if uploaded:
-    n_files = min(len(uploaded), 6)
-    st.write(f"Processing {n_files} image(s)...")
-    
-    fig, axes = plt.subplots(1, n_files, figsize=(4*n_files, 4))
-    if n_files == 1:
-        axes = [axes]  # Ensure axes is iterable
-    
-    for i, uploaded_file in enumerate(uploaded[:6]):
-        # Read image with all channels
-        img = np.array(Image.open(uploaded_file))
-
-        # ✅ Convert RGBA → RGB if needed
+# -------------------------
+# Tab 1: Camera Input
+with tab1:
+    captured_image = st.camera_input("Take a photo (back camera works on mobile)")
+    if captured_image is not None:
+        # Preprocess
+        img = np.array(Image.open(captured_image))
         if img.shape[-1] == 4:
             img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
-
-        # ✅ Convert to grayscale
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-        # ✅ Normalize to [0,1] before checking brightness
         norm = gray / 255.0
-
-        # ✅ Invert if background is white
         if np.mean(norm) > 0.5:
             gray = 255 - gray
-
-        # ✅ Resize & stack 3 channels
         gray_resized = cv2.resize(gray, (128, 128))
         img_rgb = cv2.merge([gray_resized]*3)
         img_input = np.expand_dims(img_rgb / 255.0, axis=0)
@@ -73,10 +57,40 @@ if uploaded:
         pred_class = np.argmax(prediction)
         label = class_labels[pred_class]
 
-        # Display
-        axes[i].imshow(gray_resized, cmap='gray')
-        axes[i].set_title(label, fontsize=12, color='green')
-        axes[i].axis('off')
+        st.image(gray_resized, caption=f"Prediction: {label}", use_column_width=True)
 
-    plt.tight_layout()
-    st.pyplot(fig)
+# -------------------------
+# Tab 2: File Uploader
+with tab2:
+    uploaded = st.file_uploader(
+        "Upload up to 6 images",
+        type=['png','jpg','jpeg'],
+        accept_multiple_files=True
+    )
+
+    if uploaded:
+        n_files = min(len(uploaded), 6)
+        st.write(f"Processing {n_files} image(s)...")
+        cols = st.columns(n_files)
+
+        for i, uploaded_file in enumerate(uploaded[:6]):
+            # Preprocess
+            img = np.array(Image.open(uploaded_file))
+            if img.shape[-1] == 4:
+                img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            norm = gray / 255.0
+            if np.mean(norm) > 0.5:
+                gray = 255 - gray
+            gray_resized = cv2.resize(gray, (128, 128))
+            img_rgb = cv2.merge([gray_resized]*3)
+            img_input = np.expand_dims(img_rgb / 255.0, axis=0)
+
+            # Predict
+            prediction = model.predict(img_input)
+            pred_class = np.argmax(prediction)
+            label = class_labels[pred_class]
+
+            # Display
+            with cols[i]:
+                st.image(gray_resized, caption=f"Prediction: {label}", use_column_width=True)
