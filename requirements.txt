@@ -1,6 +1,6 @@
-flask
-flask-cors
+streamlit
 tensorflow
 opencv-python-headless
 numpy
+pillow
 gdown
