@@ -1,5 +1,20 @@
+# streamlit_circuit_annotator.py
+# Recommended requirements (put in requirements.txt):
+# streamlit
+# tensorflow
+# opencv-python-headless
+# numpy
+# pillow
+# gdown
+# streamlit-drawable-canvas-fix   # recommended to avoid Streamlit-internals issues
+#
+# If you must use the original package and an older Streamlit, pin:
+# streamlit==1.24.1
+# streamlit-drawable-canvas
+
 import os
 import io
+import base64
 import gdown
 import streamlit as st
 import numpy as np
@@ -10,7 +25,10 @@ from streamlit_drawable_canvas import st_canvas
 
 st.set_page_config(page_title="Circuit Component Annotator", page_icon="🔌")
 st.title("🔌 Circuit Component Annotator")
-st.write("Upload a full circuit image, draw one component bounding box at a time, rotate/preview the crop, run the CNN classifier, and stamp the label back onto the main circuit image.")
+st.write(
+    "Upload a full circuit image, draw one component bounding box at a time, rotate/preview the crop, "
+    "run the CNN classifier, and stamp the label back onto the main circuit image."
+)
 
 # ---------- SETTINGS ----------
 MODEL_PATH = "MY_MODEL.keras"
@@ -38,6 +56,13 @@ def load_model(path):
 
 model = load_model(MODEL_PATH)
 
+# ---------- Helper: make data URI ----------
+def pil_image_to_data_uri(pil_img, fmt="PNG"):
+    buffer = io.BytesIO()
+    pil_img.save(buffer, format=fmt)
+    b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    return f"data:image/{fmt.lower()};base64,{b64}"
+
 # ---------- UI: upload image ----------
 uploaded_file = st.file_uploader("Upload a full circuit image (PNG/JPG)", type=["png", "jpg", "jpeg"]) 
 
@@ -53,18 +78,60 @@ if uploaded_file:
 
     st.caption("Draw a rectangle around ONE component, then click 'Crop & Predict'. Repeat for each component.")
 
-    # Canvas for drawing rectangles
-    canvas_result = st_canvas(
-        fill_color="",  # transparent fill
-        stroke_width=2,
-        stroke_color="#FF0000",
-        background_image=disp_img,
-        update_streamlit=True,
-        height=display_h,
-        width=display_w,
-        drawing_mode="rect",
-        key="component_canvas",
-    )
+    # Create data URI for background (bypass internal st_image helper)
+    data_uri = pil_image_to_data_uri(disp_img, fmt="PNG")
+
+    # Try using background_image_url first (this avoids the Streamlit internals helper)
+    canvas_result = None
+    tried_background_image = False
+    try:
+        canvas_result = st_canvas(
+            background_image_url=data_uri,
+            stroke_width=2,
+            stroke_color="#FF0000",
+            update_streamlit=True,
+            height=display_h,
+            width=display_w,
+            drawing_mode="rect",
+            key="component_canvas",
+        )
+    except TypeError as e:
+        # older/newer canvas versions might not accept background_image_url argument
+        st.warning("Canvas doesn't accept background_image_url — trying background_image fallback...")
+        tried_background_image = True
+    except Exception as e:
+        # if a different AttributeError arises, we'll try fallback below
+        st.warning("Canvas call with background_image_url failed, attempting fallback...")
+
+    # Fallback: try passing the PIL image directly (this is the original approach that may fail on some Streamlit versions)
+    if canvas_result is None and tried_background_image:
+        try:
+            canvas_result = st_canvas(
+                background_image=disp_img,
+                stroke_width=2,
+                stroke_color="#FF0000",
+                update_streamlit=True,
+                height=display_h,
+                width=display_w,
+                drawing_mode="rect",
+                key="component_canvas",
+            )
+        except Exception as e:
+            # Both strategies failed, instruct the user about the fix
+            st.error(
+                "streamlit-drawable-canvas is incompatible with your Streamlit version in this environment.\n\n"
+                "Two options to fix this:\n"
+                "1) Install the community-fixed package: `pip install streamlit-drawable-canvas-fix` (recommended).\n"
+                "2) Pin Streamlit to an older compatible version and use the original package:\n"
+                "   `pip install streamlit==1.24.1 streamlit-drawable-canvas`\n\n"
+                "After installing, restart the app."
+            )
+            st.stop()
+
+    # If canvas_result remains None (rare), stop
+    if canvas_result is None:
+        st.error("Unable to create drawing canvas. Try installing 'streamlit-drawable-canvas-fix' or pin Streamlit.")
+        st.stop()
 
     # Buttons to manage annotations
     col1, col2, col3 = st.columns([1,1,1])
@@ -93,7 +160,7 @@ if uploaded_file:
 
     with col2:
         if st.button("Clear last rectangle"):
-            # clearing is handled by re-rendering the canvas; push a small info
+            # easiest way to clear canvas is to rerun; instruct user
             st.experimental_rerun()
 
     with col3:
@@ -171,5 +238,3 @@ if uploaded_file:
 
 else:
     st.info("Upload a circuit image to begin.")
-
-# ---------- End ----------
