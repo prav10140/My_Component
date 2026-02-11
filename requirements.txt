@@ -1,7 +1,6 @@
-streamlit
+streamlit==1.29.0
+streamlit-drawable-canvas==0.9.3
 tensorflow
-opencv-python-headless
 numpy
 pillow
 gdown
-streamlit-drawable-canvas
