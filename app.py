@@ -11,11 +11,11 @@ from PIL import Image, ImageOps
 st.set_page_config(page_title="Circuit Annotator", page_icon="🔌")
 st.title("🔌 Circuit Annotator")
 
-# Import Canvas
+# Import the FIX library
 try:
     from streamlit_drawable_canvas import st_canvas
 except ImportError:
-    st.error("Please install streamlit-drawable-canvas in requirements.txt")
+    st.error("Please install streamlit-drawable-canvas-fix in requirements.txt")
     st.stop()
 
 # Load Model
@@ -27,6 +27,7 @@ def load_model():
     if not os.path.exists(MODEL_PATH):
         url = f"https://drive.google.com/uc?id={FILE_ID}"
         gdown.download(url, MODEL_PATH, quiet=False)
+    # compile=False fixes compatibility issues
     return tf.keras.models.load_model(MODEL_PATH, compile=False)
 
 try:
@@ -41,42 +42,37 @@ except Exception:
 uploaded_file = st.file_uploader("Upload Circuit Image", type=["png", "jpg", "jpeg"])
 
 if uploaded_file:
-    # 1. LOAD IMAGE
+    # 1. LOAD IMAGE & FIX ORIENTATION
     image = Image.open(uploaded_file)
+    image = ImageOps.exif_transpose(image) # Fixes rotated phone photos
     
-    # FIX A: Handle Rotation (Phone photos often look rotated without this)
-    image = ImageOps.exif_transpose(image) 
-    
-    # FIX B: Force RGB (Removes transparency that turns black)
+    # 2. FORCE RGB (CRITICAL FIX FOR BLACK SCREEN)
+    # Transparency (RGBA) breaks the canvas. We must convert to RGB.
     image = image.convert("RGB")
     
-    # 2. RESIZE
+    # 3. RESIZE FOR DISPLAY
     orig_w, orig_h = image.size
     DISPLAY_WIDTH = 700
     scale_factor = orig_w / DISPLAY_WIDTH
     display_h = int(orig_h / scale_factor)
     disp_img = image.resize((DISPLAY_WIDTH, display_h))
 
-    # FIX C: CONVERT TO NUMPY ARRAY (The "Black Screen" Killer)
-    # Streamlit Cloud handles NumPy arrays much better than PIL objects
-    img_array = np.array(disp_img)
-
     st.write("Draw a box around a component:")
 
-    # 3. CANVAS
+    # 4. CANVAS (Using PIL Image + Fix Library)
     canvas_result = st_canvas(
         fill_color="rgba(255, 165, 0, 0.0)",  # Transparent fill
         stroke_width=2,
         stroke_color="#FF0000",
-        background_image=img_array,           # <--- PASSING NUMPY ARRAY HERE
+        background_image=disp_img,            # PASSING PIL IMAGE (Fixes ValueError)
         update_streamlit=True,
         height=display_h,
         width=DISPLAY_WIDTH,
         drawing_mode="rect",
-        key="canvas_numpy",
+        key="canvas_final_fix",
     )
 
-    # 4. CROP & PREDICT
+    # 5. CROP & PREDICT
     if canvas_result.json_data is not None:
         objects = canvas_result.json_data["objects"]
         if objects:
@@ -95,12 +91,13 @@ if uploaded_file:
 
             if st.button("Crop & Analyze"):
                 if width > 5 and height > 5:
+                    # Crop from original high-res image
                     crop = image.crop((left, top, right, bottom))
                     st.image(crop, caption="Cropped Component", width=150)
                     
                     if 'model' in locals() and model:
                         try:
-                            # Prepare for Model
+                            # Preprocess
                             resized = crop.resize((128, 128))
                             arr = np.array(resized) / 255.0
                             arr = np.expand_dims(arr, axis=0)
