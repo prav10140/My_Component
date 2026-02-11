@@ -4,4 +4,4 @@ opencv-python-headless
 numpy
 pillow
 gdown
-streamlit-drawable-canvas-fix
+streamlit-drawable-canvas
