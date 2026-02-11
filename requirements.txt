@@ -1,5 +1,5 @@
 streamlit
-tensorflow-cpu==2.15.0
+tensorflow              <-- Removed specific version "==2.15.0"
 opencv-python-headless
 numpy
 pillow
