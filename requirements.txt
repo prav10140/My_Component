@@ -1,5 +1,5 @@
 streamlit
-tensorflow              <-- Removed specific version "==2.15.0"
+tensorflow
 opencv-python-headless
 numpy
 pillow
