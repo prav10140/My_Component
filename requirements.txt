@@ -1,7 +1,7 @@
-streamlit==1.29.0
-tensorflow-cpu==2.15.0
+streamlit
+tensorflow
 opencv-python-headless
 numpy
 pillow
 gdown
-streamlit-drawable-canvas
+streamlit-drawable-canvas-fix
