@@ -23,10 +23,9 @@ from streamlit_drawable_canvas import st_canvas
 # ==========================================
 
 st.set_page_config(page_title="Circuit Solver AI", page_icon="⚡", layout="wide")
-st.title("⚡ Sharp Thread-Like Circuit Solver")
-st.write("Sketch in **freedraw** mode. Use **Ctrl+Z** to undo. Switch to **rect** to box components for AI.")
+st.title("⚡ Sharp Multi-Mode Circuit Solver")
 
-# --- SIDEBAR CALCULATOR ---
+# --- SIDEBAR: OHM'S LAW CALCULATOR ---
 st.sidebar.header("🔢 Ohm's Law Solver")
 v_val = st.sidebar.number_input("Voltage (V)", value=0.0)
 i_val = st.sidebar.number_input("Current (I)", value=0.0)
@@ -56,62 +55,75 @@ except Exception:
 
 LABELS = ['Ammeter', 'ac_src', 'battery', 'cap', 'curr_src', 'dc_volt_src_1', 'dc_volt_src_2', 'dep_curr_src', 'dep_volt', 'diode', 'gnd_1', 'gnd_2', 'inductor', 'resistor', 'voltmeter']
 
-# --- MAIN CANVAS ---
-col_main, col_res = st.columns([2, 1])
+# --- INPUT SELECTION ---
+input_mode = st.radio("Choose Input Type", ("Whiteboard Sketch", "Live Camera"), horizontal=True)
 
-with col_main:
-    mode = st.radio("Tool", ("freedraw", "rect"), horizontal=True)
-    canvas_result = st_canvas(
-        fill_color="rgba(255, 165, 0, 0.1)", 
-        stroke_width=2, # Thin lines like thread
-        stroke_color="#000000",
-        background_color="#FFFFFF",
-        height=500,
-        width=750,
-        drawing_mode=mode,
-        display_toolbar=True, # Supports Undo/Redo & Shortcuts
-        key="sharp_thread_canvas",
-    )
+final_base_image = None
 
-if canvas_result.json_data:
-    objects = canvas_result.json_data.get("objects", [])
-    rects = [obj for obj in objects if obj['type'] == 'rect']
-    
-    if rects and st.button("🔍 Analyze Selection"):
-        # 1. ISOLATE CLEAN SKETCH (Model ignores selection boxes)
+if input_mode == "Whiteboard Sketch":
+    col_main, col_res = st.columns([2, 1])
+    with col_main:
+        tool_mode = st.radio("Tool", ("freedraw", "rect"), horizontal=True)
+        canvas_result = st_canvas(
+            fill_color="rgba(255, 165, 0, 0.1)", 
+            stroke_width=2, 
+            stroke_color="#000000",
+            background_color="#FFFFFF",
+            height=500,
+            width=750,
+            drawing_mode=tool_mode,
+            display_toolbar=True, # Support Ctrl+Z / Ctrl+Y
+            key="sharp_thread_canvas",
+        )
+    if canvas_result.image_data is not None:
         raw_img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA')
-        sketch_only = Image.new("RGB", raw_img.size, (255, 255, 255))
-        sketch_only.paste(raw_img, mask=raw_img.split()[3]) 
-        
-        # 2. SHARPENING: Binary Inversion (White lines on Black)
-        # We use a specific threshold to keep thin lines sharp
-        full_gray = np.array(sketch_only.convert("L"))
-        # Constant 'C' adjusted to 5 to make thread-like lines pop against the black
-        sharp_bw = cv2.adaptiveThreshold(full_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 5)
-        sharp_pil = Image.fromarray(sharp_bw)
+        final_base_image = Image.new("RGB", raw_img.size, (255, 255, 255))
+        final_base_image.paste(raw_img, mask=raw_img.split()[3])
 
-        labeled_img = sketch_only.copy()
-        draw = ImageDraw.Draw(labeled_img)
+else:
+    # Camera Feature
+    cam_file = st.camera_input("Take a photo of your circuit")
+    if cam_file:
+        final_base_image = Image.open(cam_file).convert("RGB")
+        st.info("Photo captured. Now use the Whiteboard mode and 'rect' to box components if needed, or analyze full image.")
+
+# --- PROCESSING ---
+if final_base_image and st.button("🔍 Analyze Circuit"):
+    # Convert to sharp B&W (Thread-like)
+    full_gray = np.array(final_base_image.convert("L"))
+    sharp_bw = cv2.adaptiveThreshold(full_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 5)
+    sharp_pil = Image.fromarray(sharp_bw)
+
+    # If it's the whiteboard with specific rects
+    if input_mode == "Whiteboard Sketch" and canvas_result.json_data:
+        objects = canvas_result.json_data.get("objects", [])
+        rects = [obj for obj in objects if obj['type'] == 'rect']
         
-        with col_res:
-            st.subheader("AI Analysis")
+        if rects:
+            labeled_img = final_base_image.copy()
+            draw = ImageDraw.Draw(labeled_img)
+            
             for i, rect in enumerate(rects):
                 l, t, w, h = int(rect['left']), int(rect['top']), int(rect['width']), int(rect['height'])
-                
-                # Crop from the sharpened thread-like layer
                 crop = sharp_pil.crop((l, t, l+w, t+h))
                 
-                # Preprocess for model (128x128 RGB)
-                input_arr = np.array(crop.resize((128, 128)).convert("RGB")) / 255.0
-                preds = model.predict(np.expand_dims(input_arr, axis=0))
+                # Predict
+                prep = np.array(crop.resize((128, 128)).convert("RGB")) / 255.0
+                preds = model.predict(np.expand_dims(prep, axis=0))
                 label = LABELS[np.argmax(preds)]
                 
-                st.image(crop, caption=f"Component {i+1}: {label}", width=150)
-                
-                # Draw on the original view for user display
                 draw.rectangle([l, t, l+w, t+h], outline="red", width=3)
                 draw.text((l + 5, t + 5), f"{label}", fill="red")
-
-        st.divider()
-        st.subheader("Annotated Whiteboard")
-        st.image(labeled_img, use_column_width=True)
+                st.write(f"**Component {i+1}:** {label}")
+            
+            st.image(labeled_img, caption="Analyzed Circuit", use_column_width=True)
+        else:
+            st.warning("Switch to 'rect' mode to box components for specific identification.")
+    else:
+        # Direct Camera Analysis
+        st.subheader("Sharp AI View")
+        st.image(sharp_pil, caption="How the AI sees your photo", width=400)
+        
+        prep = np.array(sharp_pil.resize((128, 128)).convert("RGB")) / 255.0
+        preds = model.predict(np.expand_dims(prep, axis=0))
+        st.success(f"**Full Image Prediction:** {LABELS[np.argmax(preds)]}")
