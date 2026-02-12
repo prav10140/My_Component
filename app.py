@@ -56,7 +56,7 @@ except Exception:
 LABELS = ['Ammeter', 'ac_src', 'battery', 'cap', 'curr_src', 'dc_volt_src_1', 'dc_volt_src_2', 'dep_curr_src', 'dep_volt', 'diode', 'gnd_1', 'gnd_2', 'inductor', 'resistor', 'voltmeter']
 
 # --- INPUT SELECTION ---
-input_mode = st.radio("Choose Input Type", ("Whiteboard Sketch", "Upload & Edit Photo", "Live Camera"), horizontal=True)
+input_mode = st.radio("Choose Input Type", ("Whiteboard Sketch", "Upload Photo", "Live Camera"), horizontal=True)
 
 final_base_image = None
 
@@ -80,35 +80,46 @@ if input_mode == "Whiteboard Sketch":
         final_base_image = Image.new("RGB", raw_img.size, (255, 255, 255))
         final_base_image.paste(raw_img, mask=raw_img.split()[3])
 
-elif input_mode == "Upload & Edit Photo":
+elif input_mode == "Upload Photo":
     uploaded_file = st.file_uploader("Upload a circuit photo", type=["png", "jpg", "jpeg"])
     if uploaded_file:
         img = Image.open(uploaded_file).convert("RGB")
         
-        # Simple Rotation Addition
+        # Rotation Control
         angle = st.slider("Rotate Image", -180, 180, 0)
         if angle != 0:
             img = img.rotate(angle, expand=True)
         
-        st.write("Now use 'Whiteboard Sketch' mode to draw a selection 'rect' over this image if you need to identify specific parts.")
+        st.write("### Crop Specific Components")
+        st.info("Use the tool below to draw boxes around specific components in your uploaded image.")
+        
+        # Interactive Canvas on top of the uploaded photo for cropping
+        canvas_result = st_canvas(
+            fill_color="rgba(255, 165, 0, 0.2)",
+            stroke_width=2,
+            stroke_color="#FF0000",
+            background_image=img,
+            height=500,
+            width=750,
+            drawing_mode="rect",
+            key="upload_crop_canvas",
+        )
         final_base_image = img
-        st.image(img, caption="Uploaded Photo", width=500)
 
 else:
     cam_file = st.camera_input("Take a photo of your circuit")
     if cam_file:
         final_base_image = Image.open(cam_file).convert("RGB")
 
-# --- PROCESSING ---
+# --- PROCESSING & CROP DETECTION ---
 if final_base_image and st.button("🔍 Analyze Circuit"):
-    # Convert to sharp B&W thread-like structure
+    # Convert to sharp B&W thread-like structure for the AI
     full_gray = np.array(final_base_image.convert("L"))
-    # Adaptive threshold ensures lines are bright and sharp
     sharp_bw = cv2.adaptiveThreshold(full_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 5)
     sharp_pil = Image.fromarray(sharp_bw)
 
-    # Individual Component Analysis (using rectangles from Whiteboard if present)
-    if input_mode == "Whiteboard Sketch" and canvas_result.json_data:
+    # Check for crop boxes (rects)
+    if (input_mode in ["Whiteboard Sketch", "Upload Photo"]) and canvas_result.json_data:
         objects = canvas_result.json_data.get("objects", [])
         rects = [obj for obj in objects if obj['type'] == 'rect']
         
@@ -116,27 +127,34 @@ if final_base_image and st.button("🔍 Analyze Circuit"):
             labeled_img = final_base_image.copy()
             draw = ImageDraw.Draw(labeled_img)
             
+            st.subheader("Component Identification")
+            cols = st.columns(min(len(rects), 4))
+            
             for i, rect in enumerate(rects):
                 l, t, w, h = int(rect['left']), int(rect['top']), int(rect['width']), int(rect['height'])
-                crop = sharp_pil.crop((l, t, l+w, t+h))
+                
+                # Ensure crop stays within image bounds
+                crop = sharp_pil.crop((max(0, l), max(0, t), min(final_base_image.width, l+w), min(final_base_image.height, t+h)))
                 
                 # Predict
                 prep = np.array(crop.resize((128, 128)).convert("RGB")) / 255.0
                 preds = model.predict(np.expand_dims(prep, axis=0))
                 label = LABELS[np.argmax(preds)]
                 
+                # Annotate the original image
                 draw.rectangle([l, t, l+w, t+h], outline="red", width=3)
                 draw.text((l + 5, t + 5), f"{label}", fill="red")
-                st.write(f"**Component {i+1}:** {label}")
+                
+                with cols[i % 4]:
+                    st.image(crop, caption=f"Crop {i+1}", use_column_width=True)
+                    st.write(f"**Result:** {label}")
             
-            st.image(labeled_img, caption="Analyzed Circuit", use_column_width=True)
+            st.divider()
+            st.image(labeled_img, caption="Annotated Full Image", use_column_width=True)
         else:
-            st.warning("Draw 'rect' boxes on the Whiteboard Sketch to identify specific components.")
+            st.warning("Draw boxes using the rectangle tool to identify specific components.")
     else:
-        # Full Image Analysis for Uploaded/Camera photos
-        st.subheader("Sharp AI View")
-        st.image(sharp_pil, caption="Processed Image (AI Input)", width=400)
-        
+        # Full Image Analysis if no boxes are drawn
         prep = np.array(sharp_pil.resize((128, 128)).convert("RGB")) / 255.0
         preds = model.predict(np.expand_dims(prep, axis=0))
         st.success(f"**Full Image Prediction:** {LABELS[np.argmax(preds)]}")
