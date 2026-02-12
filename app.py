@@ -13,8 +13,7 @@ from PIL import Image, ImageOps, ImageDraw
 import streamlit.elements.image as st_image
 from hashlib import md5
 
-# This block fixes the 'TypeError' by manually mapping the 
-# old 6-argument call to the new Streamlit internal utility.
+# This fixes the 'TypeError' by teaching the canvas how to talk to new Streamlit.
 if not hasattr(st_image, 'image_to_url'):
     try:
         from streamlit.elements.utils import image_to_url
@@ -22,7 +21,6 @@ if not hasattr(st_image, 'image_to_url'):
             return image_to_url(data, width, clamp, channels, output_format, image_id)
         st_image.image_to_url = patched_image_to_url
     except Exception:
-        # Fallback to prevent crash if utilities move again
         def dummy_url(*args, **kwargs): return ""
         st_image.image_to_url = dummy_url
 
@@ -80,7 +78,7 @@ if input_mode == "Whiteboard Sketch":
             height=500,
             width=750,
             drawing_mode=tool_mode,
-            display_toolbar=True, 
+            display_toolbar=True, # Supports Ctrl+Z / Ctrl+Y
             key="whiteboard_canvas",
         )
     if canvas_result.image_data is not None:
@@ -97,9 +95,9 @@ elif input_mode == "Upload Photo":
             img = img.rotate(angle, expand=True)
         
         st.write("### Crop Specific Components")
-        st.info("Draw boxes around components to identify them.")
+        st.info("Draw red boxes around components in your photo.")
         
-        # This will now load without the TypeError
+        # FIXED: Stability patch ensures this loads without TypeError
         canvas_result = st_canvas(
             fill_color="rgba(255, 165, 0, 0.2)",
             stroke_width=2,
@@ -119,7 +117,7 @@ else:
 
 # --- PROCESSING ---
 if final_base_image and st.button("🔍 Analyze Circuit"):
-    # Convert to sharp B&W thread-like structure for the AI
+    # Convert to sharp B&W thread-like structure (AI Input)
     full_gray = np.array(final_base_image.convert("L"))
     sharp_bw = cv2.adaptiveThreshold(full_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 5)
     sharp_pil = Image.fromarray(sharp_bw)
@@ -131,13 +129,14 @@ if final_base_image and st.button("🔍 Analyze Circuit"):
         if rects:
             labeled_img = final_base_image.copy()
             draw = ImageDraw.Draw(labeled_img)
-            st.subheader("Results")
+            st.subheader("Analysis Results")
             cols = st.columns(min(len(rects), 4))
             
             for i, rect in enumerate(rects):
                 l, t, w, h = int(rect['left']), int(rect['top']), int(rect['width']), int(rect['height'])
                 crop = sharp_pil.crop((max(0, l), max(0, t), min(final_base_image.width, l+w), min(final_base_image.height, t+h)))
                 
+                # Predict
                 prep = np.array(crop.resize((128, 128)).convert("RGB")) / 255.0
                 preds = model.predict(np.expand_dims(prep, axis=0))
                 label = LABELS[np.argmax(preds)]
@@ -149,11 +148,11 @@ if final_base_image and st.button("🔍 Analyze Circuit"):
                     st.image(crop, caption=f"Crop {i+1}", use_column_width=True)
                     st.write(f"**Result:** {label}")
             st.divider()
-            st.image(labeled_img, caption="Annotated Image", use_column_width=True)
+            st.image(labeled_img, caption="Annotated Full Image", use_column_width=True)
         else:
-            st.warning("Draw boxes to identify specific components.")
+            st.warning("Draw boxes to identify specific parts.")
     else:
-        # Full Image Analysis if no boxes exist
+        # Full Image Analysis
         prep = np.array(sharp_pil.resize((128, 128)).convert("RGB")) / 255.0
         preds = model.predict(np.expand_dims(prep, axis=0))
         st.success(f"**Full Image Prediction:** {LABELS[np.argmax(preds)]}")
