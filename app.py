@@ -30,8 +30,8 @@ from streamlit_drawable_canvas import st_canvas
 # PAGE SETUP
 # ----------------------------------------------------------
 st.set_page_config(page_title="Circuit Sketcher", page_icon="✏️")
-st.title("✏️ Circuit Sketch-to-Component")
-st.write("Draw a circuit component (Resistor, Capacitor, etc.) and let the AI identify it.")
+st.title("✏️ Circuit Sketch Recognizer")
+st.write("Draw a component (e.g., a resistor or diode) and click 'Recognize'.")
 
 # ----------------------------------------------------------
 # MODEL CONFIG
@@ -59,69 +59,70 @@ except Exception as e:
     st.stop()
 
 # ----------------------------------------------------------
-# WHITEBOARD CANVAS
+# WHITEBOARD INTERFACE
 # ----------------------------------------------------------
 col1, col2 = st.columns([3, 1])
 
 with col1:
-    st.subheader("Whiteboard")
+    st.subheader("Draw Here")
     canvas_result = st_canvas(
-        fill_color="rgba(255, 255, 255, 0)",  # No fill
-        stroke_width=3,
-        stroke_color="#000000",               # Black ink
-        background_color="#FFFFFF",           # White background
+        fill_color="rgba(255, 255, 255, 0)", 
+        stroke_width=4,
+        stroke_color="#000000",       # Black ink
+        background_color="#FFFFFF",   # White board
         height=400,
         width=400,
-        drawing_mode="freedraw",              # Changed from 'rect' to 'freedraw'
+        drawing_mode="freedraw",
         key="whiteboard",
     )
 
 with col2:
-    st.subheader("Controls")
-    if st.button("🗑️ Clear Canvas"):
+    st.subheader("Options")
+    if st.button("🗑️ Clear"):
         st.rerun()
     
-    analyze_button = st.button("🔍 Recognize Sketch")
+    analyze_button = st.button("🔍 Recognize")
 
 # ----------------------------------------------------------
-# PROCESSING
+# AUTO-CROP & PREDICTION LOGIC
 # ----------------------------------------------------------
 if canvas_result.image_data is not None and analyze_button:
-    # Get the image from canvas (RGBA)
+    # 1. Convert Canvas to PIL Image
     img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA')
     
-    # Convert to RGB (removes alpha)
-    img_white = Image.new("RGB", img.size, (255, 255, 255))
-    img_white.paste(img, mask=img.split()[3]) 
+    # 2. Flatten to White Background
+    bg = Image.new("RGB", img.size, (255, 255, 255))
+    bg.paste(img, mask=img.split()[3]) 
     
-    # Find bounding box of the sketch to "auto-crop"
-    # This removes empty white space around your drawing
-    gray = img_white.convert("L")
+    # 3. AUTO-CROP: Find the bounding box of the ink
+    gray = bg.convert("L")
     inverted = ImageOps.invert(gray)
     bbox = inverted.getbbox()
 
     if bbox:
-        crop = img_white.crop(bbox)
-        # Add small padding
-        crop = ImageOps.expand(crop, border=20, fill="white")
+        # Crop to the drawing and add 20px padding
+        final_crop = bg.crop(bbox)
+        final_crop = ImageOps.expand(final_crop, border=20, fill="white")
         
         st.divider()
         c1, c2 = st.columns(2)
         
         with c1:
-            st.image(crop, caption="Processed Sketch", width=200)
+            st.image(final_crop, caption="AI sees this", width=200)
         
         with c2:
             # Prepare for AI
-            resized = crop.resize((128, 128)).convert("RGB")
-            arr = np.array(resized) / 255.0
+            input_img = final_crop.resize((128, 128)).convert("RGB")
+            arr = np.array(input_img) / 255.0
             arr = np.expand_dims(arr, axis=0)
             
+            # Predict
             preds = model.predict(arr)
             idx = np.argmax(preds)
+            confidence = np.max(preds)
             
             st.success(f"### Result: {LABELS[idx]}")
-            st.progress(float(np.max(preds)))
-            st.write(f"Confidence: {np.max(preds):.2%}")
+            st.write(f"Confidence: {confidence:.2%}")
+            st.progress(float(confidence))
     else:
-        st.warning("Canvas is empty! Draw something first.")
+        st.warning("The canvas is empty. Draw a component first!")
