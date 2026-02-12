@@ -16,7 +16,7 @@ from hashlib import md5
 if not hasattr(st_image, 'image_to_url'):
     try:
         from streamlit.elements.utils import image_to_url
-        # We redefine the patch to accept the exact arguments the canvas library sends
+        # Redefining the patch to handle the exact 6 arguments the canvas sends
         def patched_image_to_url(data, width, clamp, channels, output_format, image_id):
             return image_to_url(data, width, clamp, channels, output_format, image_id)
         st_image.image_to_url = patched_image_to_url
@@ -77,7 +77,7 @@ if input_mode == "Whiteboard Sketch":
             height=500,
             width=750,
             drawing_mode=tool_mode,
-            display_toolbar=True, 
+            display_toolbar=True, # Support Ctrl+Z / Ctrl+Y
             key="whiteboard_canvas",
         )
     if canvas_result.image_data is not None:
@@ -94,7 +94,7 @@ elif input_mode == "Upload Photo":
             img = img.rotate(angle, expand=True)
         
         st.write("### Crop Specific Components")
-        st.info("Use the tool below to draw boxes around specific components.")
+        st.info("Draw boxes around components to identify them.")
         
         canvas_result = st_canvas(
             fill_color="rgba(255, 165, 0, 0.2)",
@@ -115,6 +115,7 @@ else:
 
 # --- PROCESSING ---
 if final_base_image and st.button("🔍 Analyze Circuit"):
+    # Convert to sharp B&W thread-like structure
     full_gray = np.array(final_base_image.convert("L"))
     sharp_bw = cv2.adaptiveThreshold(full_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 5)
     sharp_pil = Image.fromarray(sharp_bw)
@@ -147,6 +148,7 @@ if final_base_image and st.button("🔍 Analyze Circuit"):
         else:
             st.warning("Draw boxes to identify specific components.")
     else:
+        # Full Image Analysis
         prep = np.array(sharp_pil.resize((128, 128)).convert("RGB")) / 255.0
         preds = model.predict(np.expand_dims(prep, axis=0))
         st.success(f"**Full Image Prediction:** {LABELS[np.argmax(preds)]}")
