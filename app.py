@@ -1,49 +1,34 @@
 import os
+import io
 import gdown
 import streamlit as st
 import numpy as np
 import tensorflow as tf
 from PIL import Image, ImageOps
 
-# ==========================================================
-# 🔧 STREAMLIT DRAWABLE CANVAS STABILITY PATCH
-# ==========================================================
+# ==========================================
+# 🔧 CRITICAL COMPATIBILITY PATCH
+# ==========================================
 import streamlit.elements.image as st_image
-
-if not hasattr(st_image, "image_to_url"):
-    try:
-        from streamlit.runtime.media_file_storage import media_file_storage
-        from streamlit.elements.image import _normalize_to_bytes
-
-        def image_to_url(image, width, clamp):
-            image_bytes, mimetype = _normalize_to_bytes(image, width, clamp)
-            file_id = media_file_storage.add(image_bytes, mimetype)
-            return media_file_storage.get_url(file_id)
-
+try:
+    if not hasattr(st_image, 'image_to_url'):
+        from streamlit.elements.utils import image_to_url
         st_image.image_to_url = image_to_url
-    except Exception:
-        pass
+except Exception:
+    pass 
 
 from streamlit_drawable_canvas import st_canvas
+# ==========================================
 
-# ----------------------------------------------------------
-# PAGE SETUP
-# ----------------------------------------------------------
 st.set_page_config(page_title="Circuit Sketcher", page_icon="✏️")
 st.title("✏️ Circuit Sketch Recognizer")
-st.write("Draw a component (e.g., a resistor, capacitor, or diode) on the board and click 'Recognize'.")
+st.write("Draw a component (e.g., resistor, capacitor) and click **Recognize**.")
 
-# ----------------------------------------------------------
-# MODEL CONFIG
-# ----------------------------------------------------------
+# ------------------------------------------
+# MODEL LOADING
+# ------------------------------------------
 MODEL_PATH = "MY_MODEL.keras"
-FILE_ID = "1az8IY3x9E8jzePRz2QB3QjIhgGafjaH_"
-LABELS = [
-    'Ammeter', 'ac_src', 'battery', 'cap', 'curr_src',
-    'dc_volt_src_1', 'dc_volt_src_2', 'dep_curr_src',
-    'dep_volt', 'diode', 'gnd_1', 'gnd_2',
-    'inductor', 'resistor', 'voltmeter'
-]
+FILE_ID = "1az8IY3x9E8jzePRz2QB3QjIhgGafjaH_" 
 
 @st.cache_resource
 def load_model():
@@ -54,22 +39,20 @@ def load_model():
 
 try:
     model = load_model()
-except Exception:
-    st.error("❌ Model failed to load. Check your internet connection or File ID.")
-    st.stop()
+except Exception as e:
+    st.error(f"Model error: {e}")
 
-# ----------------------------------------------------------
-# WHITEBOARD INTERFACE
-# ----------------------------------------------------------
+# ------------------------------------------
+# WHITEBOARD UI
+# ------------------------------------------
 col1, col2 = st.columns([3, 1])
 
 with col1:
-    st.subheader("Drawing Board")
     canvas_result = st_canvas(
         fill_color="rgba(255, 255, 255, 0)", 
-        stroke_width=4,                # Thicker lines are better for AI
-        stroke_color="#000000",       # Black ink
-        background_color="#FFFFFF",   # White board
+        stroke_width=4,
+        stroke_color="#000000",        # Black ink
+        background_color="#FFFFFF",    # White board
         height=400,
         width=400,
         drawing_mode="freedraw",
@@ -77,52 +60,44 @@ with col1:
     )
 
 with col2:
-    st.subheader("Actions")
-    if st.button("🗑️ Clear Board"):
+    st.write("### Actions")
+    if st.button("🗑️ Clear"):
         st.rerun()
     
-    analyze_button = st.button("🔍 Recognize Sketch")
+    analyze_btn = st.button("🔍 Recognize")
 
-# ----------------------------------------------------------
-# AUTO-CROP & PREDICTION LOGIC
-# ----------------------------------------------------------
-if canvas_result.image_data is not None and analyze_button:
-    # 1. Convert Canvas array to PIL Image
-    img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA')
+# ------------------------------------------
+# CROP & PREDICT LOGIC
+# ------------------------------------------
+if canvas_result.image_data is not None and analyze_btn:
+    # 1. Convert Canvas to PIL Image
+    raw_img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA')
     
-    # 2. Paste onto a solid white background (removes transparency)
-    bg = Image.new("RGB", img.size, (255, 255, 255))
-    bg.paste(img, mask=img.split()[3]) 
+    # 2. Paste on white background
+    white_bg = Image.new("RGB", raw_img.size, (255, 255, 255))
+    white_bg.paste(raw_img, mask=raw_img.split()[3]) 
     
-    # 3. AUTO-CROP: Detect the drawing and trim edges
-    gray = bg.convert("L")
+    # 3. AUTO-CROP: Detect drawing edges
+    gray = white_bg.convert("L")
     inverted = ImageOps.invert(gray)
     bbox = inverted.getbbox()
 
     if bbox:
-        # Crop to the drawing and add 25px white padding
-        final_crop = bg.crop(bbox)
-        final_crop = ImageOps.expand(final_crop, border=25, fill="white")
+        final_input = white_bg.crop(bbox)
+        final_input = ImageOps.expand(final_input, border=30, fill="white")
         
         st.divider()
         c1, c2 = st.columns(2)
-        
         with c1:
-            st.image(final_crop, caption="What the AI sees", width=200)
-        
+            st.image(final_input, caption="Processed Sketch", width=200)
         with c2:
-            # Prepare for AI processing
-            input_img = final_crop.resize((128, 128)).convert("RGB")
-            arr = np.array(input_img) / 255.0
+            prep = final_input.resize((128, 128)).convert("RGB")
+            arr = np.array(prep) / 255.0
             arr = np.expand_dims(arr, axis=0)
             
-            # Predict
             preds = model.predict(arr)
-            idx = np.argmax(preds)
-            confidence = np.max(preds)
-            
-            st.success(f"### Result: {LABELS[idx]}")
-            st.write(f"**Confidence:** {confidence:.2%}")
-            st.progress(float(confidence))
+            labels = ['Ammeter', 'ac_src', 'battery', 'cap', 'curr_src', 'dc_volt_src_1', 'dc_volt_src_2', 'dep_curr_src', 'dep_volt', 'diode', 'gnd_1', 'gnd_2', 'inductor', 'resistor', 'voltmeter']
+            st.success(f"### Result: {labels[np.argmax(preds)]}")
+            st.progress(float(np.max(preds)))
     else:
-        st.warning("The board is empty. Please draw a component first!")
+        st.warning("Draw something first!")
