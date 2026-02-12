@@ -8,13 +8,16 @@ import cv2
 from PIL import Image, ImageOps, ImageDraw
 
 # ==========================================
-# 🛡️ STABILITY PATCH (Fixes the TypeError)
+# 🛡️ THE ULTIMATE STABILITY PATCH
 # ==========================================
 import streamlit.elements.image as st_image
+from hashlib import md5
+
+# This fixes the TypeError by re-aligning the handshake 
+# between the canvas library and Streamlit
 if not hasattr(st_image, 'image_to_url'):
     try:
         from streamlit.elements.utils import image_to_url
-        # This re-aligns the function arguments to stop the crash
         def patched_image_to_url(data, width, clamp, channels, output_format, image_id):
             return image_to_url(data, width, clamp, channels, output_format, image_id)
         st_image.image_to_url = patched_image_to_url
@@ -92,9 +95,9 @@ elif input_mode == "Upload Photo":
             img = img.rotate(angle, expand=True)
         
         st.write("### Crop Specific Components")
-        st.info("Draw red boxes around components to identify them.")
+        st.info("Draw boxes around components to identify them.")
         
-        # Fixed Canvas with background image support
+        # This part is now stabilized
         canvas_result = st_canvas(
             fill_color="rgba(255, 165, 0, 0.2)",
             stroke_width=2,
@@ -114,7 +117,7 @@ else:
 
 # --- PROCESSING ---
 if final_base_image and st.button("🔍 Analyze Circuit"):
-    # Convert to sharp B&W thread-like structure for the AI
+    # Convert to sharp B&W thread-like structure
     full_gray = np.array(final_base_image.convert("L"))
     sharp_bw = cv2.adaptiveThreshold(full_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 5)
     sharp_pil = Image.fromarray(sharp_bw)
