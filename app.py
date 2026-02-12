@@ -22,8 +22,8 @@ from streamlit_drawable_canvas import st_canvas
 # ==========================================
 
 st.set_page_config(page_title="Multi-Component Sketcher", page_icon="🔌")
-st.title("🔌 Multi-Component Sketcher & Labeler")
-st.write("1. Draw your components. 2. Switch mode to 'Rect' to box them for analysis.")
+st.title("🔌 Multi-Component AI Sketcher")
+st.write("1. **Freedraw**: Sketch your components. 2. **Rect**: Draw boxes around them to identify.")
 
 # --- MODEL LOADING ---
 MODEL_PATH = "MY_MODEL.keras"
@@ -46,72 +46,73 @@ LABELS = ['Ammeter', 'ac_src', 'battery', 'cap', 'curr_src', 'dc_volt_src_1', 'd
 # --- UI CONTROLS ---
 col1, col2 = st.columns([1, 1])
 with col1:
-    mode = st.radio("Drawing Mode", ("freedraw", "rect"), help="Use freedraw to sketch, then rect to select for AI.")
+    mode = st.radio("Drawing Mode", ("freedraw", "rect"), help="Sketch first, then box for analysis.")
 with col2:
-    if st.button("🗑️ Reset All"):
+    if st.button("🗑️ Reset Board"):
         st.rerun()
 
 # --- THE WHITEBOARD ---
 canvas_result = st_canvas(
     fill_color="rgba(255, 165, 0, 0.2)", 
     stroke_width=3,
-    stroke_color="#000000",
-    background_color="#FFFFFF",
+    stroke_color="#000000", # User sketches in Black
+    background_color="#FFFFFF", # Canvas is White
     height=500,
     width=700,
     drawing_mode=mode,
-    key="multi_board",
+    key="multi_board_final",
 )
 
-# --- PROCESSING MULTIPLE CROPS ---
+# --- MULTI-CROP & LABELING LOGIC ---
 if canvas_result.json_data is not None:
     objects = canvas_result.json_data.get("objects", [])
-    rects = [obj for obj in objects if obj['type'] == 'rect']
+    rect_boxes = [obj for obj in objects if obj['type'] == 'rect']
     
-    if rects and st.button("🔍 Analyze All Boxes"):
-        # Create the base image from the canvas (the sketches)
+    if rect_boxes and st.button("🔍 Analyze & Label All"):
+        # Create base image from the canvas sketches
         raw_img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA')
-        white_bg = Image.new("RGB", raw_img.size, (255, 255, 255))
-        white_bg.paste(raw_img, mask=raw_img.split()[3]) 
+        white_bg_canvas = Image.new("RGB", raw_img.size, (255, 255, 255))
+        white_bg_canvas.paste(raw_img, mask=raw_img.split()[3]) 
         
-        # Prepare to draw labels on the final result
-        final_draw_img = white_bg.copy()
-        draw = ImageDraw.Draw(final_draw_img)
-        try:
-            font = ImageFont.load_default()
-        except:
-            font = None
-
+        # Output setup
+        labeled_output = white_bg_canvas.copy()
+        draw = ImageDraw.Draw(labeled_output)
+        
         st.divider()
-        st.subheader("Analysis Results")
-        
-        for i, rect in enumerate(rects):
-            # 1. Get Crop Coordinates
+        st.subheader("Component Breakdowns")
+        cols = st.columns(min(len(rect_boxes), 4))
+
+        for i, rect in enumerate(rect_boxes):
             l, t, w, h = int(rect['left']), int(rect['top']), int(rect['width']), int(rect['height'])
             r, b = l + w, t + h
             
-            # 2. Extract and Invert (White lines on Black for Model)
-            crop = white_bg.crop((l, t, r, b))
-            gray_crop = crop.convert("L")
-            inverted_crop = ImageOps.invert(gray_crop)
+            # --- CRITICAL PREPROCESSING FOR ACCURACY ---
+            # 1. Crop the sketch
+            crop = white_bg_canvas.crop((l, t, r, b))
             
-            # 3. Predict
-            prep = inverted_crop.resize((128, 128)).convert("RGB")
-            arr = np.array(prep) / 255.0
-            arr = np.expand_dims(arr, axis=0)
+            # 2. Convert to Grayscale and INVERT
+            # This turns Black lines on White -> White lines on Black (Matching your model)
+            processed_crop = ImageOps.invert(crop.convert("L"))
             
-            res = model.predict(arr)
-            idx = np.argmax(res)
+            # 3. Resize and Normalization
+            model_input = processed_crop.resize((128, 128)).convert("RGB")
+            input_arr = np.array(model_input) / 255.0
+            input_arr = np.expand_dims(input_arr, axis=0)
+            
+            # 4. Predict
+            predictions = model.predict(input_arr)
+            idx = np.argmax(predictions)
             label = LABELS[idx]
-            conf = np.max(res)
+            confidence = np.max(predictions)
             
-            # 4. Draw Label on Final Image
-            draw.rectangle([l, t, r, b], outline="red", width=3)
-            draw.text((l, t - 15), f"{label} ({conf:.1%})", fill="red", font=font)
+            # 5. Stamp Labels on the Output
+            draw.rectangle([l, t, r, b], outline="red", width=4)
+            draw.text((l + 5, t + 5), f"{label}", fill="red")
             
-            # Show individual crops in a grid
-            st.write(f"**Box {i+1}:** {label} ({conf:.1%})")
+            # Display result in grid
+            with cols[i % 4]:
+                st.image(processed_crop, caption=f"Box {i+1}: {label}", width=120)
 
         st.divider()
-        st.subheader("Final Labeled Image")
-        st.image(final_draw_img, use_column_width=True)
+        st.subheader("Final Labeled Result")
+        st.image(labeled_output, use_column_width=True)
