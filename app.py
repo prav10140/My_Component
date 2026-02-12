@@ -56,7 +56,7 @@ except Exception:
 LABELS = ['Ammeter', 'ac_src', 'battery', 'cap', 'curr_src', 'dc_volt_src_1', 'dc_volt_src_2', 'dep_curr_src', 'dep_volt', 'diode', 'gnd_1', 'gnd_2', 'inductor', 'resistor', 'voltmeter']
 
 # --- INPUT SELECTION ---
-input_mode = st.radio("Choose Input Type", ("Whiteboard Sketch", "Live Camera"), horizontal=True)
+input_mode = st.radio("Choose Input Type", ("Whiteboard Sketch", "Upload & Edit Photo", "Live Camera"), horizontal=True)
 
 final_base_image = None
 
@@ -80,21 +80,34 @@ if input_mode == "Whiteboard Sketch":
         final_base_image = Image.new("RGB", raw_img.size, (255, 255, 255))
         final_base_image.paste(raw_img, mask=raw_img.split()[3])
 
+elif input_mode == "Upload & Edit Photo":
+    uploaded_file = st.file_uploader("Upload a circuit photo", type=["png", "jpg", "jpeg"])
+    if uploaded_file:
+        img = Image.open(uploaded_file).convert("RGB")
+        
+        # Simple Rotation Addition
+        angle = st.slider("Rotate Image", -180, 180, 0)
+        if angle != 0:
+            img = img.rotate(angle, expand=True)
+        
+        st.write("Now use 'Whiteboard Sketch' mode to draw a selection 'rect' over this image if you need to identify specific parts.")
+        final_base_image = img
+        st.image(img, caption="Uploaded Photo", width=500)
+
 else:
-    # Camera Feature
     cam_file = st.camera_input("Take a photo of your circuit")
     if cam_file:
         final_base_image = Image.open(cam_file).convert("RGB")
-        st.info("Photo captured. Now use the Whiteboard mode and 'rect' to box components if needed, or analyze full image.")
 
 # --- PROCESSING ---
 if final_base_image and st.button("🔍 Analyze Circuit"):
-    # Convert to sharp B&W (Thread-like)
+    # Convert to sharp B&W thread-like structure
     full_gray = np.array(final_base_image.convert("L"))
+    # Adaptive threshold ensures lines are bright and sharp
     sharp_bw = cv2.adaptiveThreshold(full_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 5)
     sharp_pil = Image.fromarray(sharp_bw)
 
-    # If it's the whiteboard with specific rects
+    # Individual Component Analysis (using rectangles from Whiteboard if present)
     if input_mode == "Whiteboard Sketch" and canvas_result.json_data:
         objects = canvas_result.json_data.get("objects", [])
         rects = [obj for obj in objects if obj['type'] == 'rect']
@@ -118,11 +131,11 @@ if final_base_image and st.button("🔍 Analyze Circuit"):
             
             st.image(labeled_img, caption="Analyzed Circuit", use_column_width=True)
         else:
-            st.warning("Switch to 'rect' mode to box components for specific identification.")
+            st.warning("Draw 'rect' boxes on the Whiteboard Sketch to identify specific components.")
     else:
-        # Direct Camera Analysis
+        # Full Image Analysis for Uploaded/Camera photos
         st.subheader("Sharp AI View")
-        st.image(sharp_pil, caption="How the AI sees your photo", width=400)
+        st.image(sharp_pil, caption="Processed Image (AI Input)", width=400)
         
         prep = np.array(sharp_pil.resize((128, 128)).convert("RGB")) / 255.0
         preds = model.predict(np.expand_dims(prep, axis=0))
