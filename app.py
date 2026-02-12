@@ -24,21 +24,20 @@ if not hasattr(st_image, "image_to_url"):
     except Exception:
         pass
 
-# Import AFTER patch
 from streamlit_drawable_canvas import st_canvas
 
 # ----------------------------------------------------------
 # PAGE SETUP
 # ----------------------------------------------------------
-st.set_page_config(page_title="Circuit Annotator", page_icon="🔌")
-st.title("🔌 Circuit Component Annotator")
+st.set_page_config(page_title="Circuit Sketcher", page_icon="✏️")
+st.title("✏️ Circuit Sketch-to-Component")
+st.write("Draw a circuit component (Resistor, Capacitor, etc.) and let the AI identify it.")
 
 # ----------------------------------------------------------
 # MODEL CONFIG
 # ----------------------------------------------------------
 MODEL_PATH = "MY_MODEL.keras"
 FILE_ID = "1az8IY3x9E8jzePRz2QB3QjIhgGafjaH_"
-
 LABELS = [
     'Ammeter', 'ac_src', 'battery', 'cap', 'curr_src',
     'dc_volt_src_1', 'dc_volt_src_2', 'dep_curr_src',
@@ -46,119 +45,83 @@ LABELS = [
     'inductor', 'resistor', 'voltmeter'
 ]
 
-# ----------------------------------------------------------
-# LOAD MODEL
-# ----------------------------------------------------------
 @st.cache_resource
 def load_model():
     if not os.path.exists(MODEL_PATH):
         url = f"https://drive.google.com/uc?id={FILE_ID}"
         gdown.download(url, MODEL_PATH, quiet=False)
-
     return tf.keras.models.load_model(MODEL_PATH, compile=False)
 
-
 try:
-    with st.spinner("Loading AI model..."):
-        model = load_model()
+    model = load_model()
 except Exception as e:
     st.error("❌ Model failed to load")
     st.stop()
 
 # ----------------------------------------------------------
-# FILE UPLOAD
+# WHITEBOARD CANVAS
 # ----------------------------------------------------------
-uploaded_file = st.file_uploader(
-    "Upload Circuit Image",
-    type=["png", "jpg", "jpeg"]
-)
+col1, col2 = st.columns([3, 1])
 
-if uploaded_file:
-
-    # ----------------------------------
-    # LOAD + FIX IMAGE
-    # ----------------------------------
-    image = Image.open(uploaded_file)
-    image = ImageOps.exif_transpose(image)
-    image = image.convert("RGB")
-
-    orig_w, orig_h = image.size
-
-    # ----------------------------------
-    # DISPLAY RESIZE
-    # ----------------------------------
-    DISPLAY_WIDTH = 700
-    scale_factor = orig_w / DISPLAY_WIDTH
-    display_h = int(orig_h / scale_factor)
-
-    disp_img = image.resize(
-        (DISPLAY_WIDTH, display_h)
-    ).convert("RGBA")
-
-    st.write("✏️ Draw rectangle around a component")
-
-    # ----------------------------------
-    # CANVAS
-    # ----------------------------------
+with col1:
+    st.subheader("Whiteboard")
     canvas_result = st_canvas(
-        fill_color="rgba(255,165,0,0.1)",
-        stroke_width=2,
-        stroke_color="#FF0000",
-        background_image=disp_img,
-        update_streamlit=True,
-        height=display_h,
-        width=DISPLAY_WIDTH,
-        drawing_mode="rect",
-        key="canvas",
+        fill_color="rgba(255, 255, 255, 0)",  # No fill
+        stroke_width=3,
+        stroke_color="#000000",               # Black ink
+        background_color="#FFFFFF",           # White background
+        height=400,
+        width=400,
+        drawing_mode="freedraw",              # Changed from 'rect' to 'freedraw'
+        key="whiteboard",
     )
 
-    # ----------------------------------
-    # PROCESS DRAWING
-    # ----------------------------------
-    if canvas_result.json_data is not None:
+with col2:
+    st.subheader("Controls")
+    if st.button("🗑️ Clear Canvas"):
+        st.rerun()
+    
+    analyze_button = st.button("🔍 Recognize Sketch")
 
-        objects = canvas_result.json_data.get("objects", [])
+# ----------------------------------------------------------
+# PROCESSING
+# ----------------------------------------------------------
+if canvas_result.image_data is not None and analyze_button:
+    # Get the image from canvas (RGBA)
+    img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA')
+    
+    # Convert to RGB (removes alpha)
+    img_white = Image.new("RGB", img.size, (255, 255, 255))
+    img_white.paste(img, mask=img.split()[3]) 
+    
+    # Find bounding box of the sketch to "auto-crop"
+    # This removes empty white space around your drawing
+    gray = img_white.convert("L")
+    inverted = ImageOps.invert(gray)
+    bbox = inverted.getbbox()
 
-        if objects:
-            obj = objects[-1]
-
-            left = int(obj["left"] * scale_factor)
-            top = int(obj["top"] * scale_factor)
-            width = int(obj["width"] * scale_factor)
-            height = int(obj["height"] * scale_factor)
-
-            left = max(0, left)
-            top = max(0, top)
-            right = min(orig_w, left + width)
-            bottom = min(orig_h, top + height)
-
-            if st.button("🔍 Crop & Analyze"):
-
-                if width < 5 or height < 5:
-                    st.warning("Selection too small")
-                    st.stop()
-
-                crop = image.crop((left, top, right, bottom))
-                st.image(crop, caption="Cropped Component", width=160)
-
-                # ----------------------------------
-                # PREDICTION
-                # ----------------------------------
-                try:
-                    resized = crop.resize((128, 128))
-                    arr = np.array(resized) / 255.0
-                    arr = np.expand_dims(arr, axis=0)
-
-                    preds = model.predict(arr)
-                    idx = np.argmax(preds)
-                    confidence = np.max(preds)
-
-                    st.success(
-                        f"### 🧠 Prediction: {LABELS[idx]}"
-                    )
-                    st.info(
-                        f"Confidence: {confidence:.2%}"
-                    )
-
-                except Exception as e:
-                    st.error(f"Prediction Error: {e}")
+    if bbox:
+        crop = img_white.crop(bbox)
+        # Add small padding
+        crop = ImageOps.expand(crop, border=20, fill="white")
+        
+        st.divider()
+        c1, c2 = st.columns(2)
+        
+        with c1:
+            st.image(crop, caption="Processed Sketch", width=200)
+        
+        with c2:
+            # Prepare for AI
+            resized = crop.resize((128, 128)).convert("RGB")
+            arr = np.array(resized) / 255.0
+            arr = np.expand_dims(arr, axis=0)
+            
+            preds = model.predict(arr)
+            idx = np.argmax(preds)
+            
+            st.success(f"### Result: {LABELS[idx]}")
+            st.progress(float(np.max(preds)))
+            st.write(f"Confidence: {np.max(preds):.2%}")
+    else:
+        st.warning("Canvas is empty! Draw something first.")
