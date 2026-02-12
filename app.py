@@ -1,5 +1,4 @@
 import os
-import io
 import gdown
 import streamlit as st
 import numpy as np
@@ -7,97 +6,77 @@ import tensorflow as tf
 from PIL import Image, ImageOps
 
 # ==========================================
-# 🔧 CRITICAL COMPATIBILITY PATCH
+# 🛡️ THE ULTIMATE STABILITY PATCH
 # ==========================================
 import streamlit.elements.image as st_image
-try:
-    if not hasattr(st_image, 'image_to_url'):
+if not hasattr(st_image, 'image_to_url'):
+    try:
         from streamlit.elements.utils import image_to_url
         st_image.image_to_url = image_to_url
-except Exception:
-    pass 
+    except Exception:
+        def dummy(data, width, height, clamp, channels, output_format, image_id): return ""
+        st_image.image_to_url = dummy
 
 from streamlit_drawable_canvas import st_canvas
 # ==========================================
 
 st.set_page_config(page_title="Circuit Sketcher", page_icon="✏️")
-st.title("✏️ Circuit Sketch Recognizer")
-st.write("Draw a component (e.g., resistor, capacitor) and click **Recognize**.")
+st.title("✏️ Simple Whiteboard Detection")
+st.write("Draw a component (e.g. Resistor) and click **Analyze**.")
 
-# ------------------------------------------
-# MODEL LOADING
-# ------------------------------------------
+# --- MODEL LOADING ---
 MODEL_PATH = "MY_MODEL.keras"
 FILE_ID = "1az8IY3x9E8jzePRz2QB3QjIhgGafjaH_" 
 
 @st.cache_resource
 def load_model():
     if not os.path.exists(MODEL_PATH):
-        url = f"https://drive.google.com/uc?id={FILE_ID}"
-        gdown.download(url, MODEL_PATH, quiet=False)
+        gdown.download(f"https://drive.google.com/uc?id={FILE_ID}", MODEL_PATH, quiet=False)
     return tf.keras.models.load_model(MODEL_PATH, compile=False)
 
 try:
     model = load_model()
 except Exception as e:
-    st.error(f"Model error: {e}")
+    st.error(f"AI Loading Error: {e}")
+    st.stop()
 
-# ------------------------------------------
-# WHITEBOARD UI
-# ------------------------------------------
-col1, col2 = st.columns([3, 1])
+LABELS = ['Ammeter', 'ac_src', 'battery', 'cap', 'curr_src', 'dc_volt_src_1', 'dc_volt_src_2', 'dep_curr_src', 'dep_volt', 'diode', 'gnd_1', 'gnd_2', 'inductor', 'resistor', 'voltmeter']
 
-with col1:
-    canvas_result = st_canvas(
-        fill_color="rgba(255, 255, 255, 0)", 
-        stroke_width=4,
-        stroke_color="#000000",        # Black ink
-        background_color="#FFFFFF",    # White board
-        height=400,
-        width=400,
-        drawing_mode="freedraw",
-        key="whiteboard",
-    )
+# --- WHITEBOARD ---
+canvas_result = st_canvas(
+    fill_color="rgba(255, 255, 255, 0)", 
+    stroke_width=4,
+    stroke_color="#000000",
+    background_color="#FFFFFF",
+    height=400,
+    width=400,
+    drawing_mode="freedraw",
+    key="board",
+)
 
-with col2:
-    st.write("### Actions")
-    if st.button("🗑️ Clear"):
-        st.rerun()
-    
-    analyze_btn = st.button("🔍 Recognize")
-
-# ------------------------------------------
-# CROP & PREDICT LOGIC
-# ------------------------------------------
-if canvas_result.image_data is not None and analyze_btn:
-    # 1. Convert Canvas to PIL Image
-    raw_img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA')
-    
-    # 2. Paste on white background
-    white_bg = Image.new("RGB", raw_img.size, (255, 255, 255))
-    white_bg.paste(raw_img, mask=raw_img.split()[3]) 
-    
-    # 3. AUTO-CROP: Detect drawing edges
-    gray = white_bg.convert("L")
-    inverted = ImageOps.invert(gray)
-    bbox = inverted.getbbox()
-
-    if bbox:
-        final_input = white_bg.crop(bbox)
-        final_input = ImageOps.expand(final_input, border=30, fill="white")
+if st.button("🔍 Analyze Sketch"):
+    if canvas_result.image_data is not None:
+        # Convert drawing to PIL
+        img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA')
+        bg = Image.new("RGB", img.size, (255, 255, 255))
+        bg.paste(img, mask=img.split()[3]) 
         
-        st.divider()
-        c1, c2 = st.columns(2)
-        with c1:
-            st.image(final_input, caption="Processed Sketch", width=200)
-        with c2:
-            prep = final_input.resize((128, 128)).convert("RGB")
+        # Auto-Crop drawing
+        inverted = ImageOps.invert(bg.convert("L"))
+        bbox = inverted.getbbox()
+        
+        if bbox:
+            crop = bg.crop(bbox)
+            crop = ImageOps.expand(crop, border=25, fill="white")
+            
+            st.image(crop, caption="Processed Sketch", width=150)
+            
+            # Prediction
+            prep = crop.resize((128, 128))
             arr = np.array(prep) / 255.0
             arr = np.expand_dims(arr, axis=0)
             
-            preds = model.predict(arr)
-            labels = ['Ammeter', 'ac_src', 'battery', 'cap', 'curr_src', 'dc_volt_src_1', 'dc_volt_src_2', 'dep_curr_src', 'dep_volt', 'diode', 'gnd_1', 'gnd_2', 'inductor', 'resistor', 'voltmeter']
-            st.success(f"### Result: {labels[np.argmax(preds)]}")
-            st.progress(float(np.max(preds)))
-    else:
-        st.warning("Draw something first!")
+            res = model.predict(arr)
+            st.success(f"### Result: {LABELS[np.argmax(res)]}")
+        else:
+            st.warning("Draw something first!")
