@@ -8,24 +8,18 @@ import cv2
 from PIL import Image, ImageOps, ImageDraw
 
 # ==========================================
-# 🛡️ THE ULTIMATE STABILITY PATCH (FIXES TYPEERROR)
+# 🛡️ STABILITY PATCH (Fixes the TypeError)
 # ==========================================
 import streamlit.elements.image as st_image
-from hashlib import md5
-
-# We must force Streamlit to recognize the old call signature 
-# used by the drawable-canvas library.
 if not hasattr(st_image, 'image_to_url'):
     try:
         from streamlit.elements.utils import image_to_url
-        # This wrapper captures the 6 arguments sent by the library
+        # This re-aligns the function arguments to stop the crash
         def patched_image_to_url(data, width, clamp, channels, output_format, image_id):
             return image_to_url(data, width, clamp, channels, output_format, image_id)
         st_image.image_to_url = patched_image_to_url
     except Exception:
-        # Fallback for very specific Streamlit Cloud environments
-        def dummy_url(*args, **kwargs): return ""
-        st_image.image_to_url = dummy_url
+        pass
 
 from streamlit_drawable_canvas import st_canvas
 # ==========================================
@@ -35,7 +29,6 @@ st.title("⚡ Sharp Multi-Mode Circuit Solver")
 
 # --- SIDEBAR: OHM'S LAW CALCULATOR ---
 st.sidebar.header("🔢 Ohm's Law Solver")
-# Ohm's Law: $V = I \times R$
 v_val = st.sidebar.number_input("Voltage (V)", value=0.0)
 i_val = st.sidebar.number_input("Current (I)", value=0.0)
 r_val = st.sidebar.number_input("Resistance (R)", value=0.0)
@@ -44,7 +37,7 @@ if st.sidebar.button("Solve"):
     if v_val > 0 and r_val > 0: st.sidebar.success(f"I = {v_val / r_val:.2f} A")
     elif i_val > 0 and r_val > 0: st.sidebar.success(f"V = {i_val * r_val:.2f} V")
     elif v_val > 0 and i_val > 0: st.sidebar.success(f"R = {v_val / i_val:.2f} Ω")
-    else: st.sidebar.warning("Provide two values to solve.")
+    else: st.sidebar.warning("Provide two values!")
 
 # --- MODEL LOADING ---
 MODEL_PATH = "MY_MODEL.keras"
@@ -59,7 +52,7 @@ def load_model():
 try:
     model = load_model()
 except Exception:
-    st.error("AI Model failed to load. Check your network or File ID.")
+    st.error("AI Model failed to load.")
     st.stop()
 
 LABELS = ['Ammeter', 'ac_src', 'battery', 'cap', 'curr_src', 'dc_volt_src_1', 'dc_volt_src_2', 'dep_curr_src', 'dep_volt', 'diode', 'gnd_1', 'gnd_2', 'inductor', 'resistor', 'voltmeter']
@@ -99,9 +92,9 @@ elif input_mode == "Upload Photo":
             img = img.rotate(angle, expand=True)
         
         st.write("### Crop Specific Components")
-        st.info("Draw boxes around components to identify them.")
+        st.info("Draw red boxes around components to identify them.")
         
-        # This is where the TypeError usually hits
+        # Fixed Canvas with background image support
         canvas_result = st_canvas(
             fill_color="rgba(255, 165, 0, 0.2)",
             stroke_width=2,
@@ -121,7 +114,7 @@ else:
 
 # --- PROCESSING ---
 if final_base_image and st.button("🔍 Analyze Circuit"):
-    # Convert to sharp B&W thread-like structure
+    # Convert to sharp B&W thread-like structure for the AI
     full_gray = np.array(final_base_image.convert("L"))
     sharp_bw = cv2.adaptiveThreshold(full_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 5)
     sharp_pil = Image.fromarray(sharp_bw)
