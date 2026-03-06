@@ -22,7 +22,7 @@ if not hasattr(st_image, 'image_to_url'):
 from streamlit_drawable_canvas import st_canvas
 # ==========================================
 
-st.set_page_config(page_title="Circuit Solver AI", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Circuit Component Detector Model", page_icon="⚡", layout="wide")
 st.title("⚡ Sharp Multi-Mode Circuit Solver")
 
 # --- SIDEBAR: OHM'S LAW CALCULATOR ---
